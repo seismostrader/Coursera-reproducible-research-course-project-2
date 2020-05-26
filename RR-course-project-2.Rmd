@@ -1,0 +1,239 @@
+---
+title: "Exploring the NOAA Storm Database"
+author: "Anne Strader"
+date: "5/26/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+Storms and other severe weather events can cause both public health and economic problems for communities and municipalities. Many severe events can result in fatalities, injuries, and property damage, and preventing such outcomes to the extent possible is a key concern.
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+The following questions are investigated in this analysis:
+
+1. Across the United States, which types of events (as indicated in the EVTYPE) variable are most harmful with respect to population health?
+2. Across the United States, which types of events have the greatest economic consequences?
+
+## Load Necessary R Libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+```
+
+## Data Processing
+
+The NOAA storm dataset for this project is available [here](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2), in the form of a .csv file compressed using the bzip2 algorithm. 
+
+First, the data are downloaded:
+
+```{r}
+# define the URL where the source data are stored
+sourceURL <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+
+# define the source data zip file name
+sourceDataZipFile <- "StormData.csv.bz2"
+
+# check if dataset has already been downloaded in working directory, and download it if not
+if (!file.exists(sourceDataZipFile)) {
+  download.file(sourceURL, sourceDataZipFile)
+}
+```
+
+Read in the data and examine the basic structure of the dataset:
+
+```{r, cache=TRUE}
+# read the dataset
+stormData <- read.csv(bzfile("StormData.csv.bz2"))
+
+# summarize the dataset
+str(stormData)
+head(stormData)
+```
+
+The dataset contains 37 variables and 902,297 observations. Information such as event time, event location, event type is included, as well as information about injuries/fatalities and property damage.
+
+To answer the questions mentioned in the synopsis, we need information about:
+
+- the event type
+  - EVTYPE (factor, type of event)
+- damage to population health (injuries, fatalities, etc.)
+  - FATALITIES (numeric, number of fatalities)
+  - INJURIES (numeric, number of injuries)
+- damage to property
+  - PROPDMG (numeric, monetary property damage amount, to be multiplied by an exponent specified in the variable "PROPDMGEXP")
+  - PROPDMGEXP (K = thousands, M = millions, B = billions)
+  - CROPDMG (numeric, monetary crop damage amount, to be multiplied by an exponent specified in the variable "CROPDMGEXP")
+  - CROPDMGEXP (K = thousands, M = millions, B = billions)
+  
+The dataset is then filtered, keeping only the relevant variables:
+
+```{r}
+# create a vector of the relevant variable names
+stormDataRelVars <- c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP")
+
+# subset the dataset so that it only contains relevant variables
+stormData <- stormData[ , stormDataRelVars]
+head(stormData)
+```
+
+Exponents are missing for crop damage in the first few rows of the dataset. These observations all have $0 crop damage, but let's check the unique values for both exponents anyway:
+
+```{r}
+# unique property damage exponents
+unique(stormData$PROPDMGEXP)
+
+# unique crop damage exponents
+unique(stormData$CROPDMGEXP)
+```
+
+The damage exponents (values of PROPDMGEXP and CROPDMGEXP) are defined as follows, based on the [NOAA documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf) and [exponent guide](https://rstudio-pubs-static.s3.amazonaws.com/58957_37b6723ee52b455990e149edde45e5b6.html):
+
+- H, h = hundreds
+- K, k = thousands
+- M, m = millions
+- B, b = billions
+- (+) = 1
+- (-) = 0
+- (?) = 0
+- blank/empty character = 0
+- 0...8 = 10
+
+Next, multipliers are defined for each exponent and the monetary damage values PROPDMG and CROPDMG are updated:
+
+```{r}
+# define and sort unique exponent values
+exponents <- sort(unique(as.character(stormData$PROPDMGEXP)))
+
+# define multipliers corresponding to exponent values
+dmgMultipliers <- c(0, 0, 0, 1, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10^9, 100, 100, 1000, 10^6, 10^6)
+
+# define column for property damage multiplier
+stormData$PROPDMGMULTI <- dmgMultipliers[match(stormData$PROPDMGEXP, exponents)]
+
+# define column for crop damage multiplier
+stormData$CROPDMGMULTI <- dmgMultipliers[match(stormData$CROPDMGEXP, exponents)]
+
+# update property damage costs
+stormData$PROPDMG <- stormData$PROPDMG * stormData$PROPDMGMULTI
+
+# update crop damage costs
+stormData$CROPDMG <- stormData$CROPDMG * stormData$CROPDMGMULTI
+
+# remove exponent and multiplier columns in dataset
+stormData <- stormData[!names(stormData) %in% c("PROPDMGEXP", "PROPDMGMULTI", "CROPDMGEXP", "CROPDMGMULTI")]
+
+# look at the dataset
+head(stormData)
+```
+
+### Data Processing for Question 1: Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+Create a data frame that contains the total number of fatalities per event type and sort by descending total number of fatalities:
+
+```{r}
+deathByEVTYPE <- stormData %>% select(EVTYPE, FATALITIES) %>% group_by(EVTYPE) %>% summarize(totalFatalities = sum(FATALITIES)) %>% arrange(-totalFatalities)
+
+head(deathByEVTYPE)
+```
+
+Create a data frame that contains the total number of injuries per event type and sort by descending total number of injuries:
+
+```{r}
+injuryByEVTYPE <- stormData %>% select(EVTYPE, INJURIES) %>% group_by(EVTYPE) %>% summarize(totalInjuries = sum(INJURIES)) %>% arrange(-totalInjuries)
+
+head(injuryByEVTYPE)
+```
+
+### Data Processing for Question 2: Across the United States, which types of events have the greatest economic consequences?
+
+Create a column in the stormData data frame with total monetary damage:
+
+```{r}
+stormData$totalDMG <- stormData$PROPDMG + stormData$CROPDMG
+
+head(stormData)
+```
+
+Create a data frame that contains the total monetary damage per event type and sort by descending amount of total monetary damage:
+
+```{r}
+damageByEVTYPE <- stormData %>% select(EVTYPE, totalDMG) %>% group_by(EVTYPE) %>% summarize(dmgByEvent = sum(totalDMG)) %>% arrange(-dmgByEvent)
+
+head(damageByEVTYPE)
+```
+
+## Results 
+
+### Question 1: Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+
+Plot the seven event types with the greatest number of fatalities:
+
+```{r, fatalitiesPerEventType}
+# initiate plot
+g <- ggplot(deathByEVTYPE[1:7, ], aes(x=reorder(EVTYPE, -totalFatalities), y=totalFatalities))
+
+# create a bar plot of total numbers of fatalities by event type
+g <- g + geom_bar(stat="identity", aes(fill=EVTYPE))
+
+# add a title and relabel axes
+g <- g + labs(x="event type", y = "total number of fatalities") + ggtitle("Weather Events with the Highest Numbers of Fatalities") 
+
+# center title and adjust event type labels on x-axis
+g <- g + theme(plot.title=element_text(hjust=0.5), axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+
+# display plot
+g
+```
+
+Tornados cause by far the most fatalities, but there are also substantial contributions from excessive heat and flash flooding.
+
+Plot the seven event types with the greatest number of injuries:
+
+```{r, injuriesPerEventType}
+# initiate plot
+g <- ggplot(injuryByEVTYPE[1:7, ], aes(x=reorder(EVTYPE, -totalInjuries), y=totalInjuries))
+
+# create a bar plot of total numbers of fatalities by event type
+g <- g + geom_bar(stat="identity", aes(fill=EVTYPE))
+
+# add a title and relabel axes
+g <- g + labs(x="event type", y = "total number of injuries") + ggtitle("Weather Events with the Highest Numbers of Injuries") 
+
+# center title and adjust event type labels on x-axis
+g <- g + theme(plot.title=element_text(hjust=0.5), axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+
+# display plot
+g
+```
+
+As well as causing the most fatalities, tornados cause several times as many injuries as other event types.
+
+### Question 2: Across the United States, which types of events have the greatest economic consequences?
+
+Plot the seven event types with the greatest total monetary damage (property + crop):
+
+```{r, damagePerEventType}
+# initiate plot
+g <- ggplot(damageByEVTYPE[1:7, ], aes(x=reorder(EVTYPE, -dmgByEvent), y=dmgByEvent))
+
+# create a bar plot of total numbers of fatalities by event type
+g <- g + geom_bar(stat="identity", aes(fill=EVTYPE))
+
+# add a title and relabel axes
+g <- g + labs(x="event type", y = "total monetary damage (USD)") + ggtitle("Weather Events with the Highest Economic Damage (Property + Crop)") 
+
+# center title and adjust event type labels on x-axis
+g <- g + theme(plot.title=element_text(hjust=0.5), axis.text.x = element_text(angle=90, hjust=1, vjust=0.5))
+
+# display plot
+g
+```
+
+Flooding causes the greatest amount of economic damage, followed by the hurricane/typhoon category and tornados.
